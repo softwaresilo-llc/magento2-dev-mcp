@@ -249,7 +249,6 @@ Analyzes `di.xml` files across all DI scopes to find plugins for a given class. 
 - `auth` (optional): `admin` | `none`
 - `token` (optional): Explicit bearer token
 - `adminUsername` / `adminPassword` (optional): Admin auth for schema fetch
-- `format` (optional): `json` | `md`
 - `artifactPath` (optional): Write output file
 - `insecure` (optional): Allow insecure TLS certs (default: `true`)
 

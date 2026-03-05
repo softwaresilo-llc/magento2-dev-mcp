@@ -878,50 +878,6 @@ function buildEndpointContract(
   };
 }
 
-function buildMarkdownContract(contractPayload: Record<string, unknown>): string {
-  const generatedAt = String(contractPayload.generated_at ?? "");
-  const source = isRecord(contractPayload.source) ? contractPayload.source : {};
-  const endpoints = Array.isArray(contractPayload.endpoints) ? contractPayload.endpoints : [];
-
-  const lines: string[] = [];
-  lines.push("# REST API Contract");
-  lines.push("");
-  lines.push(`Generated: ${generatedAt}`);
-  lines.push("");
-  lines.push(`Source schema: \`${String(source.schema_url ?? "n/a")}\``);
-  lines.push("");
-  lines.push(`Schema auth: \`${String(source.schema_auth ?? "none")}\``);
-  lines.push("");
-
-  for (const endpointEntry of endpoints) {
-    const endpoint = isRecord(endpointEntry) ? endpointEntry : {};
-    const method = String(endpoint.method ?? "");
-    const path = String(endpoint.path ?? "");
-    lines.push(`## \`${method} ${path}\``);
-    lines.push(`- Missing in schema: ${Boolean(endpoint.missingInSchema) ? "yes" : "no"}`);
-    lines.push(`- Auth hint: ${Boolean(endpoint.has401Response) ? "token/authorization expected" : "no explicit 401 in schema"}`);
-    const pathParams = Array.isArray(endpoint.pathParams) ? endpoint.pathParams : [];
-    const queryParams = Array.isArray(endpoint.queryParams) ? endpoint.queryParams : [];
-    lines.push(`- Path params: ${pathParams.length > 0 ? pathParams.map((param) => `\`${String((isRecord(param) ? param.name : "") ?? "")}\``).join(", ") : "none"}`);
-    lines.push(`- Query params: ${queryParams.length > 0 ? queryParams.map((param) => `\`${String((isRecord(param) ? param.name : "") ?? "")}\``).join(", ") : "none"}`);
-    const body = isRecord(endpoint.body) ? endpoint.body : {};
-    const requiredFields = Array.isArray(body.requiredFields) ? body.requiredFields : [];
-    const optionalFields = Array.isArray(body.optionalFields) ? body.optionalFields : [];
-    lines.push(`- Required body fields: ${requiredFields.length > 0 ? requiredFields.map((field) => `\`${String(field)}\``).join(", ") : "none"}`);
-    lines.push(`- Optional body fields: ${optionalFields.length > 0 ? optionalFields.map((field) => `\`${String(field)}\``).join(", ") : "none"}`);
-    if (endpoint.sampleRequestBody !== null && endpoint.sampleRequestBody !== undefined) {
-      lines.push("");
-      lines.push("Example request body:");
-      lines.push("```json");
-      lines.push(JSON.stringify(endpoint.sampleRequestBody));
-      lines.push("```");
-    }
-    lines.push("");
-  }
-
-  return lines.join("\n");
-}
-
 function truncateOutput(value: string, maxChars: number = 12000): string {
   if (value.length <= maxChars) {
     return value;
@@ -2620,9 +2576,6 @@ server.registerTool(
       adminPassword: z.string()
         .optional()
         .describe("Admin password"),
-      format: z.enum(["json", "md"])
-        .default("json")
-        .describe("Contract output format"),
       artifactPath: z.string()
         .optional()
         .describe("Optional output file path"),
@@ -2641,7 +2594,6 @@ server.registerTool(
     token,
     adminUsername,
     adminPassword,
-    format = "json",
     artifactPath,
     insecure = true
   }) => {
@@ -2871,9 +2823,7 @@ server.registerTool(
       endpoints
     };
 
-    const contractOutput = format === "md"
-      ? buildMarkdownContract(contractPayload)
-      : contractPayload;
+    const contractOutput = contractPayload;
 
     let resolvedArtifactPath: string | null = null;
     if (artifactPath) {
@@ -2882,7 +2832,7 @@ server.registerTool(
         await mkdir(dirname(resolvedArtifactPath), { recursive: true });
         await writeFile(
           resolvedArtifactPath,
-          format === "md" ? String(contractOutput) : JSON.stringify(contractOutput, null, 2),
+          JSON.stringify(contractOutput, null, 2),
           "utf8"
         );
       } catch (error) {
