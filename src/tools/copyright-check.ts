@@ -5,6 +5,20 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { resolveModuleDirectory } from "../core/module-resolver.js";
 
+export interface CopyrightCheckResult {
+  okCopyright: boolean;
+  summary: {
+    passes: number;
+    warnings: number;
+    failures: number;
+  };
+  missingHeaders: Array<Record<string, unknown>>;
+  invalidFiles: Array<Record<string, unknown>>;
+  invalidExtensions: string[];
+  moduleDir: string;
+  scannedFiles: number;
+}
+
 const ALLOWED_EXTENSIONS = new Set(["php", "phtml", "js", "xml"]);
 
 function normalizeCommentLines(block: string): string[] {
@@ -127,6 +141,82 @@ function readModuleNameFromModuleXml(content: string): string {
   return match?.[1]?.trim() ?? "";
 }
 
+export async function runCopyrightCheck(input: {
+  moduleDir: string;
+  extensions?: string[];
+  format?: "text" | "json";
+}): Promise<CopyrightCheckResult> {
+  const resolvedModule = resolveModuleDirectory(input.moduleDir, { requireSubPath: "etc/module.xml" });
+  const format = input.format ?? "json";
+
+  const requestedExtensions = (input.extensions ?? ["php", "phtml", "js", "xml"])
+        .map((value) => value.trim().toLowerCase().replace(/^\./, ""))
+        .filter(Boolean);
+
+      const invalidExtensions = requestedExtensions.filter((ext) => !ALLOWED_EXTENSIONS.has(ext));
+      const validExtensions = new Set(requestedExtensions.filter((ext) => ALLOWED_EXTENSIONS.has(ext)));
+
+  if (validExtensions.size === 0) {
+    return {
+      okCopyright: false,
+      summary: { passes: 0, warnings: 0, failures: 1 },
+      missingHeaders: [],
+      invalidFiles: [],
+      invalidExtensions,
+      moduleDir: resolvedModule.relativeModuleDir,
+      scannedFiles: 0
+    };
+  }
+
+  const moduleXmlPath = join(resolvedModule.absoluteModuleDir, "etc", "module.xml");
+  let moduleName = "";
+  try {
+    const moduleXml = await readFile(moduleXmlPath, "utf8");
+    moduleName = readModuleNameFromModuleXml(moduleXml);
+  } catch {
+    moduleName = "";
+  }
+
+  if (!moduleName) {
+    throw new Error(`Could not read module name from ${resolvedModule.relativeModuleDir}/etc/module.xml`);
+  }
+
+  const files = await listFilesRecursively(resolvedModule.absoluteModuleDir, validExtensions);
+  const missingHeaders: Array<Record<string, unknown>> = [];
+
+  for (const filePath of files) {
+    const ext = filePath.includes(".") ? filePath.slice(filePath.lastIndexOf(".") + 1).toLowerCase() : "";
+    const content = await readFile(filePath, "utf8");
+    const headerBlock = extractHeaderComment(content, ext);
+    const validation = validateHeaderBlock(headerBlock, moduleName);
+
+    if (!validation.ok) {
+      missingHeaders.push({
+        file: relative(process.cwd(), filePath),
+        reason: validation.reason
+      });
+    }
+  }
+
+  const failures = missingHeaders.length;
+  const warnings = invalidExtensions.length > 0 ? 1 : 0;
+  const passes = failures === 0 ? 1 : 0;
+
+  return {
+    okCopyright: failures === 0,
+    summary: {
+      passes,
+      warnings,
+      failures
+    },
+    missingHeaders,
+    invalidFiles: missingHeaders,
+    invalidExtensions,
+    moduleDir: resolvedModule.relativeModuleDir,
+    scannedFiles: files.length
+  };
+}
+
 export function registerCopyrightCheckTool(server: McpServer): void {
   server.registerTool(
     "copyright-check",
@@ -140,96 +230,19 @@ export function registerCopyrightCheckTool(server: McpServer): void {
       }
     },
     async ({ moduleDir, extensions, format = "json" }) => {
-      let resolvedModule;
       try {
-        resolvedModule = resolveModuleDirectory(moduleDir, { requireSubPath: "etc/module.xml" });
+        const payload = await runCopyrightCheck({ moduleDir, extensions, format });
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
+        isError: !payload.okCopyright
+      };
       } catch (error) {
         return {
           content: [{ type: "text", text: `Invalid moduleDir: ${error instanceof Error ? error.message : String(error)}` }],
           isError: true
         };
       }
-
-      const requestedExtensions = (extensions ?? ["php", "phtml", "js", "xml"])
-        .map((value) => value.trim().toLowerCase().replace(/^\./, ""))
-        .filter(Boolean);
-
-      const invalidExtensions = requestedExtensions.filter((ext) => !ALLOWED_EXTENSIONS.has(ext));
-      const validExtensions = new Set(requestedExtensions.filter((ext) => ALLOWED_EXTENSIONS.has(ext)));
-
-      if (validExtensions.size === 0) {
-        return {
-          content: [{
-            type: "text",
-            text: JSON.stringify({
-              okCopyright: false,
-              summary: { passes: 0, warnings: 0, failures: 1 },
-              missingHeaders: [],
-              invalidFiles: [],
-              invalidExtensions,
-              moduleDir: resolvedModule.relativeModuleDir,
-              format
-            }, null, 2)
-          }],
-          isError: true
-        };
-      }
-
-      const moduleXmlPath = join(resolvedModule.absoluteModuleDir, "etc", "module.xml");
-      let moduleName = "";
-      try {
-        const moduleXml = await readFile(moduleXmlPath, "utf8");
-        moduleName = readModuleNameFromModuleXml(moduleXml);
-      } catch {
-        moduleName = "";
-      }
-
-      if (!moduleName) {
-        return {
-          content: [{ type: "text", text: `Could not read module name from ${resolvedModule.relativeModuleDir}/etc/module.xml` }],
-          isError: true
-        };
-      }
-
-      const files = await listFilesRecursively(resolvedModule.absoluteModuleDir, validExtensions);
-      const missingHeaders: Array<Record<string, unknown>> = [];
-
-      for (const filePath of files) {
-        const ext = filePath.includes(".") ? filePath.slice(filePath.lastIndexOf(".") + 1).toLowerCase() : "";
-        const content = await readFile(filePath, "utf8");
-        const headerBlock = extractHeaderComment(content, ext);
-        const validation = validateHeaderBlock(headerBlock, moduleName);
-
-        if (!validation.ok) {
-          missingHeaders.push({
-            file: relative(process.cwd(), filePath),
-            reason: validation.reason
-          });
-        }
-      }
-
-      const failures = missingHeaders.length;
-      const warnings = invalidExtensions.length > 0 ? 1 : 0;
-      const passes = failures === 0 ? 1 : 0;
-
-      const payload = {
-        okCopyright: failures === 0,
-        summary: {
-          passes,
-          warnings,
-          failures
-        },
-        missingHeaders,
-        invalidFiles: missingHeaders,
-        invalidExtensions,
-        moduleDir: resolvedModule.relativeModuleDir,
-        scannedFiles: files.length
-      };
-
-      return {
-        content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
-        isError: !payload.okCopyright
-      };
     }
   );
 }

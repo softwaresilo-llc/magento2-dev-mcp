@@ -70,7 +70,7 @@ AVAILABLE TOOLS:
   - Configuration: show, set, store-get, store-set
   - Database: query
   - Web API: api-get-token, api-check, api-contract
-  - Quality Tools: translation-check, module-integration-test, compatibility-check, copyright-check
+  - Quality Tools: translation-check, module-integration-test, compatibility-check, copyright-check, release-check
   - Mail: mail-inspect (source/query/evidence with optional email image rendering)
   - Setup: upgrade, di-compile, db-status, static-content-deploy
   - Cron: list, run

@@ -13,6 +13,23 @@ interface VersionResult {
   notes: string[];
 }
 
+export interface CompatibilityCheckResult {
+  versionResults: Record<string, VersionResult>;
+  workerErrors: Array<Record<string, unknown>>;
+  summary: {
+    ok: boolean;
+    checked_versions: string[];
+    worker_failures: number;
+    issues_total: number;
+  };
+  success: boolean;
+  metadata: {
+    moduleDir: string;
+    constraints: Array<{ packageName: string; constraint: string }>;
+    outputFormat: "text" | "json";
+  };
+}
+
 const DEFAULT_VERSIONS = ["2.4.4", "2.4.5", "2.4.6", "2.4.7", "2.4.8"];
 
 function normalizeVersion(version: string): string {
@@ -62,6 +79,83 @@ function collectMagentoConstraints(composerJson: Record<string, unknown>): Array
   return constraints;
 }
 
+export async function runCompatibilityCheck(input: {
+  moduleDir: string;
+  magentoDocsDir?: string;
+  versions?: string[];
+  format?: "text" | "json";
+}): Promise<CompatibilityCheckResult> {
+  const resolvedModule = resolveModuleDirectory(input.moduleDir);
+  const format = input.format ?? "json";
+
+  const composerPath = join(resolvedModule.absoluteModuleDir, "composer.json");
+  if (!existsSync(composerPath)) {
+    throw new Error(`composer.json not found: ${resolvedModule.relativeModuleDir}/composer.json`);
+  }
+
+  let composerJson: Record<string, unknown>;
+  try {
+    composerJson = JSON.parse(await readFile(composerPath, "utf8")) as Record<string, unknown>;
+  } catch (error) {
+    throw new Error(`Invalid composer.json: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  const constraints = collectMagentoConstraints(composerJson);
+
+  let effectiveVersions: string[] = [];
+  if (Array.isArray(input.versions) && input.versions.length > 0) {
+    effectiveVersions = input.versions.map(normalizeVersion);
+  } else if (input.magentoDocsDir?.trim()) {
+    effectiveVersions = await discoverVersionsFromDocsDir(input.magentoDocsDir.trim());
+  }
+  if (effectiveVersions.length === 0) {
+    effectiveVersions = [...DEFAULT_VERSIONS];
+  }
+
+  const uniqueVersions = Array.from(new Set(effectiveVersions));
+  const versionResults: Record<string, VersionResult> = {};
+
+  for (const version of uniqueVersions) {
+    const notes: string[] = [];
+    let issues = 0;
+
+    for (const constraint of constraints) {
+      const matches = evaluateConstraintExpression(version, constraint.constraint);
+      if (!matches) {
+        issues += 1;
+        notes.push(`${constraint.packageName} requires '${constraint.constraint}'`);
+      }
+    }
+
+    versionResults[version] = {
+      ok: issues === 0,
+      issues,
+      notes
+    };
+  }
+
+  const totalIssues = Object.values(versionResults).reduce((sum, row) => sum + row.issues, 0);
+  const workerErrors: Array<Record<string, unknown>> = [];
+  const summary = {
+    ok: totalIssues === 0,
+    checked_versions: uniqueVersions,
+    worker_failures: 0,
+    issues_total: totalIssues
+  };
+
+  return {
+    versionResults,
+    workerErrors,
+    summary,
+    success: summary.ok,
+    metadata: {
+      moduleDir: resolvedModule.relativeModuleDir,
+      constraints,
+      outputFormat: format
+    }
+  };
+}
+
 export function registerCompatibilityCheckTool(server: McpServer): void {
   server.registerTool(
     "compatibility-check",
@@ -76,93 +170,19 @@ export function registerCompatibilityCheckTool(server: McpServer): void {
       }
     },
     async ({ moduleDir, magentoDocsDir, versions, format = "json" }) => {
-      let resolvedModule;
       try {
-        resolvedModule = resolveModuleDirectory(moduleDir);
+        const payload = await runCompatibilityCheck({ moduleDir, magentoDocsDir, versions, format });
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
+        isError: !payload.success
+      };
       } catch (error) {
         return {
           content: [{ type: "text", text: `Invalid moduleDir: ${error instanceof Error ? error.message : String(error)}` }],
           isError: true
         };
       }
-
-      const composerPath = join(resolvedModule.absoluteModuleDir, "composer.json");
-      if (!existsSync(composerPath)) {
-        return {
-          content: [{ type: "text", text: `composer.json not found: ${resolvedModule.relativeModuleDir}/composer.json` }],
-          isError: true
-        };
-      }
-
-      let composerJson: Record<string, unknown>;
-      try {
-        composerJson = JSON.parse(await readFile(composerPath, "utf8")) as Record<string, unknown>;
-      } catch (error) {
-        return {
-          content: [{ type: "text", text: `Invalid composer.json: ${error instanceof Error ? error.message : String(error)}` }],
-          isError: true
-        };
-      }
-
-      const constraints = collectMagentoConstraints(composerJson);
-
-      let effectiveVersions: string[] = [];
-      if (Array.isArray(versions) && versions.length > 0) {
-        effectiveVersions = versions.map(normalizeVersion);
-      } else if (magentoDocsDir?.trim()) {
-        effectiveVersions = await discoverVersionsFromDocsDir(magentoDocsDir.trim());
-      }
-      if (effectiveVersions.length === 0) {
-        effectiveVersions = [...DEFAULT_VERSIONS];
-      }
-
-      const uniqueVersions = Array.from(new Set(effectiveVersions));
-      const versionResults: Record<string, VersionResult> = {};
-
-      for (const version of uniqueVersions) {
-        const notes: string[] = [];
-        let issues = 0;
-
-        for (const constraint of constraints) {
-          const matches = evaluateConstraintExpression(version, constraint.constraint);
-          if (!matches) {
-            issues += 1;
-            notes.push(`${constraint.packageName} requires '${constraint.constraint}'`);
-          }
-        }
-
-        versionResults[version] = {
-          ok: issues === 0,
-          issues,
-          notes
-        };
-      }
-
-      const totalIssues = Object.values(versionResults).reduce((sum, row) => sum + row.issues, 0);
-      const workerErrors: Array<Record<string, unknown>> = [];
-      const summary = {
-        ok: totalIssues === 0,
-        checked_versions: uniqueVersions,
-        worker_failures: 0,
-        issues_total: totalIssues
-      };
-
-      const payload = {
-        versionResults,
-        workerErrors,
-        summary,
-        success: summary.ok,
-        metadata: {
-          moduleDir: resolvedModule.relativeModuleDir,
-          constraints,
-          outputFormat: format
-        }
-      };
-
-      return {
-        content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
-        isError: !payload.success
-      };
     }
   );
 }

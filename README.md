@@ -331,6 +331,37 @@ Analyzes `di.xml` files across all DI scopes to find plugins for a given class. 
 
 </details>
 
+<details>
+<summary><strong>release-check</strong> - Run native release readiness checks</summary>
+
+**Parameters:**
+- `moduleDir` (required): `app/code/Vendor/Module`, `vendor/vendor/module`, or short form like `Vendor_Module`
+- `remote` (optional): Git remote name, default `origin`
+- `allowedBranches` (optional): allowed branch list, default `master`
+- `version` (optional): expected release version
+- `phpcsStandard` (optional): PHPCS standard, default `Magento2`
+- `phpcsPaths` (optional): custom PHPCS target paths
+
+**Checks:**
+- `composer.json` version
+- `etc/module.xml` `setup_version`
+- `CHANGELOG.md` newest version/date
+- git branch, clean tree, tag existence, next-version step, remote fetch
+- unit phpunit with coverage
+- PHPCS
+- native `copyright-check`
+- native `translation-check`
+- native `compatibility-check`
+
+**Output:**
+- `ready`
+- `gateResults`
+- `summary`
+- `blockingFindings`
+- `warnings`
+
+</details>
+
 ## System Diagnostics
 
 <details>

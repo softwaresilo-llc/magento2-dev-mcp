@@ -5,6 +5,24 @@ import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { resolveModuleDirectory } from "../core/module-resolver.js";
 
+export interface TranslationCheckResult {
+  okTranslations: boolean;
+  summary: {
+    passes: number;
+    warnings: number;
+    failures: number;
+  };
+  missing: Array<Record<string, unknown>>;
+  placeholderIssues: Array<Record<string, unknown>>;
+  moduleDir: string;
+  metrics: {
+    sourceFiles: number;
+    sourcePhrases: number;
+    locales: string[];
+  };
+  notes?: string[];
+}
+
 interface CsvEntry {
   key: string;
   value: string;
@@ -158,66 +176,41 @@ function parseTranslateAttributePhrases(content: string): string[] {
   return Array.from(phrases);
 }
 
-export function registerTranslationCheckTool(server: McpServer): void {
-  server.registerTool(
-    "translation-check",
-    {
-      title: "Translation Check",
-      description: "Run module translation QA checks (missing keys, placeholders, source coverage)",
-      inputSchema: {
-        moduleDir: z
-          .string()
-          .describe("Module directory, e.g. app/code/Vendor/Module or vendor/vendor/module"),
-        locales: z
-          .array(z.string())
-          .optional()
-          .describe("Locales to validate, e.g. ['en_US','de_DE','es_ES']"),
-        strictSource: z
-          .boolean()
-          .default(true)
-          .describe("When false, source phrase coverage is downgraded from FAIL to WARN"),
-        format: z
-          .enum(["text", "json"])
-          .default("json")
-          .describe("Output format")
-      }
-    },
-    async ({ moduleDir, locales, strictSource = true, format = "json" }) => {
-      let resolvedModule;
-      try {
-        resolvedModule = resolveModuleDirectory(moduleDir);
-      } catch (error) {
-        return {
-          content: [{ type: "text", text: `Invalid moduleDir: ${error instanceof Error ? error.message : String(error)}` }],
-          isError: true
-        };
-      }
+export async function runTranslationCheck(input: {
+  moduleDir: string;
+  locales?: string[];
+  strictSource?: boolean;
+  format?: "text" | "json";
+}): Promise<TranslationCheckResult> {
+  const resolvedModule = resolveModuleDirectory(input.moduleDir);
+  const format = input.format ?? "json";
+  const strictSource = input.strictSource ?? true;
 
-      const effectiveLocales = Array.isArray(locales) && locales.length > 0
-        ? locales
-        : ["en_US", "de_DE", "es_ES"];
+  const effectiveLocales = Array.isArray(input.locales) && input.locales.length > 0
+    ? input.locales
+    : ["en_US", "de_DE", "es_ES"];
 
-      let passes = 0;
-      let warnings = 0;
-      let failures = 0;
+  let passes = 0;
+  let warnings = 0;
+  let failures = 0;
 
-      const missing: Array<Record<string, unknown>> = [];
-      const placeholderIssues: Array<Record<string, unknown>> = [];
-      const notes: string[] = [];
+  const missing: Array<Record<string, unknown>> = [];
+  const placeholderIssues: Array<Record<string, unknown>> = [];
+  const notes: string[] = [];
 
-      const localeMaps = new Map<string, Map<string, { value: string; line: number }>>();
-      for (const locale of effectiveLocales) {
-        const localeFile = join(resolvedModule.absoluteModuleDir, "i18n", `${locale}.csv`);
-        if (!existsSync(localeFile)) {
-          failures += 1;
-          missing.push({
-            locale,
-            key: "*",
-            reason: "missing_locale_file",
-            file: relative(process.cwd(), localeFile)
-          });
-          continue;
-        }
+  const localeMaps = new Map<string, Map<string, { value: string; line: number }>>();
+  for (const locale of effectiveLocales) {
+    const localeFile = join(resolvedModule.absoluteModuleDir, "i18n", `${locale}.csv`);
+    if (!existsSync(localeFile)) {
+      failures += 1;
+      missing.push({
+        locale,
+        key: "*",
+        reason: "missing_locale_file",
+        file: relative(process.cwd(), localeFile)
+      });
+      continue;
+    }
 
         const csvContent = await readFile(localeFile, "utf8");
         const rows = parseCsvTwoColumns(csvContent);
@@ -313,28 +306,52 @@ export function registerTranslationCheckTool(server: McpServer): void {
         passes += 1;
       }
 
-      const payload = {
-        okTranslations: failures === 0,
-        summary: {
-          passes,
-          warnings,
-          failures
-        },
-        missing,
-        placeholderIssues,
-        moduleDir: resolvedModule.relativeModuleDir,
-        metrics: {
-          sourceFiles: sourceFiles.length,
-          sourcePhrases: sourcePhrases.size,
-          locales: effectiveLocales
-        },
-        notes: format === "text" ? notes : undefined
-      };
+  return {
+    okTranslations: failures === 0,
+    summary: {
+      passes,
+      warnings,
+      failures
+    },
+    missing,
+    placeholderIssues,
+    moduleDir: resolvedModule.relativeModuleDir,
+    metrics: {
+      sourceFiles: sourceFiles.length,
+      sourcePhrases: sourcePhrases.size,
+      locales: effectiveLocales
+    },
+    notes: format === "text" ? notes : undefined
+  };
+}
+
+export function registerTranslationCheckTool(server: McpServer): void {
+  server.registerTool(
+    "translation-check",
+    {
+      title: "Translation Check",
+      description: "Run module translation QA checks (missing keys, placeholders, source coverage)",
+      inputSchema: {
+        moduleDir: z.string().describe("Module directory, e.g. app/code/Vendor/Module or vendor/vendor/module"),
+        locales: z.array(z.string()).optional().describe("Locales to validate, e.g. ['en_US','de_DE','es_ES']"),
+        strictSource: z.boolean().default(true).describe("When false, source phrase coverage is downgraded from FAIL to WARN"),
+        format: z.enum(["text", "json"]).default("json").describe("Output format")
+      }
+    },
+    async ({ moduleDir, locales, strictSource = true, format = "json" }) => {
+      try {
+        const payload = await runTranslationCheck({ moduleDir, locales, strictSource, format });
 
       return {
         content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
         isError: !payload.okTranslations
       };
+      } catch (error) {
+        return {
+          content: [{ type: "text", text: `Invalid moduleDir: ${error instanceof Error ? error.message : String(error)}` }],
+          isError: true
+        };
+      }
     }
   );
 }

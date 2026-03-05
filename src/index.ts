@@ -18,6 +18,7 @@ import { registerTranslationCheckTool } from "./tools/translation-check.js";
 import { registerModuleIntegrationTestTool } from "./tools/module-integration-test.js";
 import { registerCompatibilityCheckTool } from "./tools/compatibility-check.js";
 import { registerCopyrightCheckTool } from "./tools/copyright-check.js";
+import { registerReleaseCheckTool } from "./tools/release-check.js";
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -2577,6 +2578,7 @@ registerTranslationCheckTool(server);
 registerModuleIntegrationTestTool(server);
 registerCompatibilityCheckTool(server);
 registerCopyrightCheckTool(server);
+registerReleaseCheckTool(server);
 registerApiGetTokenTool(server, { defaultMagentoBaseUrl });
 registerApiCheckTool(server, { defaultMagentoBaseUrl });
 
@@ -3290,6 +3292,7 @@ async function main() {
     console.error("- module-integration-test: Run module integration phpunit tests");
     console.error("- compatibility-check: Analyze module compatibility across Magento versions");
     console.error("- copyright-check: Validate module copyright headers");
+    console.error("- release-check: Run native release readiness checks for a Magento module");
     console.error("Mail:");
     console.error("- mail-inspect: Inspect Mailpit/API messages and optionally render a specific email to image");
     
