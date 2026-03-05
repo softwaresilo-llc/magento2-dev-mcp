@@ -161,15 +161,53 @@ function extractPhrasesFromSourceContent(content: string): string[] {
   return Array.from(phrases);
 }
 
+function decodeXmlEntities(value: string): string {
+  return value
+    .replace(/&quot;/g, "\"")
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
+
+function parseXmlAttributes(attributeText: string): Map<string, string> {
+  const attributes = new Map<string, string>();
+  const attributeRegex = /([A-Za-z_:][A-Za-z0-9_.:-]*)\s*=\s*"([^"]*)"/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = attributeRegex.exec(attributeText)) !== null) {
+    attributes.set(match[1], decodeXmlEntities(match[2] ?? ""));
+  }
+
+  return attributes;
+}
+
 function parseTranslateAttributePhrases(content: string): string[] {
   const phrases = new Set<string>();
-
-  const simpleAttrRegex = /translate\s*=\s*"([^"]+)"/g;
+  const elementRegex = /<([A-Za-z_:][A-Za-z0-9_.:-]*)([^>]*)>([\s\S]*?)<\/\1>|<([A-Za-z_:][A-Za-z0-9_.:-]*)([^>]*)\/>/g;
   let match: RegExpExecArray | null;
-  while ((match = simpleAttrRegex.exec(content)) !== null) {
-    const values = (match[1] ?? "").split(/\s+/).map((item) => normalizePhrase(item)).filter(Boolean);
-    for (const value of values) {
-      phrases.add(value);
+
+  while ((match = elementRegex.exec(content)) !== null) {
+    const openingAttributes = `${match[2] ?? ""} ${match[5] ?? ""}`;
+    const attributes = parseXmlAttributes(openingAttributes);
+    const translateValue = normalizePhrase(attributes.get("translate") ?? "").toLowerCase();
+    if (!translateValue) {
+      continue;
+    }
+
+    if (translateValue === "true") {
+      const textContent = normalizePhrase(decodeXmlEntities((match[3] ?? "").replace(/<[^>]+>/g, " ")));
+      if (textContent.length > 0) {
+        phrases.add(textContent);
+      }
+      continue;
+    }
+
+    for (const attributeName of translateValue.split(/\s+/).filter(Boolean)) {
+      const attributePhrase = normalizePhrase(attributes.get(attributeName) ?? "");
+      if (attributePhrase.length > 0) {
+        phrases.add(attributePhrase);
+      }
     }
   }
 
