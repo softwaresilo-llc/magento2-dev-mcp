@@ -57,6 +57,9 @@ If Docker execution fails, the server falls back to running `magerun2` locally.
 | Variable | Description | Default |
 |---|---|---|
 | `MAGERUN2_COMMAND` | Override the magerun2 binary name or path | `magerun2` |
+| `MAGENTO_BASE_URL` | Default base URL for `api-get-token`, `api-check`, and `api-contract` | `https://magento248.test` |
+| `MAILPIT_BASE_URL` | Default base URL for `mail-inspect` when `source.baseUrl` is omitted | `https://mail.magento248.test` |
+| `MAIL_RENDER_CHROME_COMMAND` | Chrome/Chromium binary for HTML-to-image rendering in `mail-inspect` | auto-detect |
 
 Use `MAGERUN2_COMMAND` when your system installs the binary under a different name (e.g. `n98-magerun2`) or when you need to specify an absolute path:
 
@@ -203,6 +206,131 @@ Analyzes `di.xml` files across all DI scopes to find plugins for a given class. 
 
 </details>
 
+## Web API Tools
+
+<details>
+<summary><strong>api-get-token</strong> - Create admin/staff/customer token via native MCP HTTP calls</summary>
+
+**Parameters:**
+- `type` (required): `admin` | `staff` | `customer`
+- `password` (required): Account password
+- `username` (optional): Required for `admin` and `customer`
+- `email` (optional): Required for `staff`
+- `baseUrl` (optional): Magento base URL
+- `insecure` (optional): Allow insecure TLS certs (default: `true`)
+
+</details>
+
+<details>
+<summary><strong>api-check</strong> - Probe module webapi routes and classify auth behavior</summary>
+
+**Parameters:**
+- `moduleDir` (required): `app/code/Vendor/Module` or `vendor/vendor/module`
+- `baseUrl` (optional): Magento base URL
+- `adminUsername` / `adminPassword` (optional): Admin auth for probes
+- `staffEmail` / `staffPassword` (optional): Staff probe auth
+- `insecure` (optional): Allow insecure TLS certs (default: `true`)
+
+**Notes:**
+- `moduleDir` is validated and must contain `etc/webapi.xml`.
+- Works for both custom modules (`app/code`) and vendor modules (`vendor/*`).
+
+</details>
+
+<details>
+<summary><strong>api-contract</strong> - Generate filtered API contract from Magento schema</summary>
+
+**Parameters:**
+- `moduleDir` (optional): `app/code/Vendor/Module` or `vendor/vendor/module`
+- `pathPrefix` (optional): REST prefix like `/V1/foo/`
+- `baseUrl` (optional): Magento base URL
+- `storeCode` (optional): Store code (default: `default`)
+- `schemaFile` (optional): Use local schema JSON file
+- `auth` (optional): `admin` | `none`
+- `token` (optional): Explicit bearer token
+- `adminUsername` / `adminPassword` (optional): Admin auth for schema fetch
+- `format` (optional): `json` | `md`
+- `artifactPath` (optional): Write output file
+- `insecure` (optional): Allow insecure TLS certs (default: `true`)
+
+**Notes:**
+- At least one of `moduleDir` or `pathPrefix` is required.
+- If `moduleDir` is set, it is validated and normalized like in `api-check`.
+
+</details>
+
+## Quality Tools (Native MCP)
+
+<details>
+<summary><strong>translation-check</strong> - Run module translation QA checks (native, no external script)</summary>
+
+**Parameters:**
+- `moduleDir` (required): `app/code/Vendor/Module`, `vendor/vendor/module`, or short form like `Vendor_Module`
+- `locales` (optional): Locale list, e.g. `["en_US","de_DE","es_ES"]`
+- `strictSource` (optional): Strict source phrase coverage (default: `true`)
+- `format` (optional): `text` | `json` (default: `json`)
+
+**Output (normalized):**
+- `okTranslations`
+- `summary` (`passes`, `warnings`, `failures`)
+- `missing`
+- `placeholderIssues`
+
+</details>
+
+<details>
+<summary><strong>module-integration-test</strong> - Run module integration PHPUnit tests</summary>
+
+**Parameters:**
+- `moduleDir` (required): `app/code/Vendor/Module` or `vendor/vendor/module`
+- `file` (optional): Integration test file under `Test/Integration`
+- `filter` (optional): PHPUnit filter expression
+- `noDoNotCacheResult` (optional)
+- `fixBypassFlags` (optional)
+- `skipBypassFlagsCheck` (optional)
+
+**Output (normalized):**
+- `success`
+- `phpunitExitCode`
+- `testsRun`
+- `failures`
+- `stdout` / `stderr` (truncated)
+- `warnings` (e.g. bypass-flag notes)
+
+</details>
+
+<details>
+<summary><strong>compatibility-check</strong> - Run compatibility analysis over Magento versions (native, no external script)</summary>
+
+**Parameters:**
+- `moduleDir` (required): `app/code/Vendor/Module`, `vendor/vendor/module`, or short form like `Vendor_Module`
+- `magentoDocsDir` (optional): Version snapshot base dir
+- `versions` (optional): Version list
+- `format` (optional): `text` | `json` (default: `json`)
+
+**Output (normalized):**
+- `versionResults`
+- `workerErrors`
+- `summary`
+
+</details>
+
+<details>
+<summary><strong>copyright-check</strong> - Validate required copyright headers (native, no external script)</summary>
+
+**Parameters:**
+- `moduleDir` (required): `app/code/Vendor/Module`, `vendor/vendor/module`, or short form like `Vendor_Module`
+- `extensions` (optional): e.g. `["php","phtml","js","xml"]`
+- `format` (optional): `text` | `json` (default: `json`)
+
+**Output (normalized):**
+- `okCopyright`
+- `summary` (`passes`, `warnings`, `failures`)
+- `missingHeaders`
+- `invalidFiles`
+
+</details>
+
 ## System Diagnostics
 
 <details>
@@ -210,6 +338,52 @@ Analyzes `di.xml` files across all DI scopes to find plugins for a given class. 
 
 **Parameters:**
 - `format` (optional): Output format (`table`, `json`, `csv`) - Default: `table`
+
+</details>
+
+## Mail Tools
+
+<details>
+<summary><strong>mail-inspect</strong> - Inspect emails from Mailpit/API and optionally render a specific email to image</summary>
+
+**Input structure:**
+- `source` (optional)
+  - `provider`: `mailpit` | `api` | `imap` (default: `mailpit`, `imap` currently not implemented)
+  - `baseUrl`: mail source base URL (if omitted, server uses `MAILPIT_BASE_URL` / default)
+  - `credentials`: optional `username`, `password`, or `token`
+  - `insecureTls`: allow local/self-signed TLS certs (default: `true`)
+- `query` (optional)
+  - `messageId`: exact Mailpit `ID` or `MessageID` (if set, filters are ignored)
+  - `limit`: max returned messages (default: `1`)
+  - `fetchLimit`: newest messages fetched before filtering (default: `50`)
+  - `filters`: optional `to`, `subject`, `contains` (case-insensitive contains match)
+- `evidence` (optional)
+  - `renderImage`: render HTML body to PNG
+  - `renderDir`: output directory for artifacts
+  - `includeHtml`: include full HTML body in response
+  - `includeText`: include full text body in response
+  - `imageOutput`: `path` or `base64` (default: `path`)
+  - `imageWidth` / `imageHeight`: rendering viewport
+
+**Use case: pull image from one specific email**
+```json
+{
+  "name": "mail-inspect",
+  "arguments": {
+    "source": {
+      "provider": "mailpit",
+      "baseUrl": "https://mail.magento248.test"
+    },
+    "query": {
+      "messageId": "YpMkUsooFfsehGTBCU7YYt"
+    },
+    "evidence": {
+      "renderImage": true,
+      "imageOutput": "path"
+    }
+  }
+}
+```
 
 </details>
 
