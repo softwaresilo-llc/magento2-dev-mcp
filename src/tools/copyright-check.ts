@@ -168,7 +168,6 @@ function readModuleNameFromModuleXml(content: string): string {
 export async function runCopyrightCheck(input: {
   moduleDir: string;
   extensions?: string[];
-  format?: "text" | "json";
 }): Promise<CopyrightCheckResult> {
   const resolvedModule = resolveModuleDirectory(input.moduleDir, { requireSubPath: "etc/module.xml" });
 
@@ -280,13 +279,12 @@ export function registerCopyrightCheckTool(server: McpServer): void {
       description: "Validate required copyright headers in module files",
       inputSchema: {
         moduleDir: z.string().describe("Module directory, e.g. app/code/Vendor/Module or vendor/vendor/module"),
-        extensions: z.array(z.string()).optional().describe("Optional file extensions, e.g. ['php','phtml','js','xml']"),
-        format: z.enum(["text", "json"]).default("json").describe("Output format")
+        extensions: z.array(z.string()).optional().describe("Optional file extensions, e.g. ['php','phtml','js','xml']")
       }
     },
-    async ({ moduleDir, extensions, format = "json" }) => {
+    async ({ moduleDir, extensions }) => {
       try {
-        const payload = await runCopyrightCheck({ moduleDir, extensions, format });
+        const payload = await runCopyrightCheck({ moduleDir, extensions });
         return {
           content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
           isError: !payload.okCopyright

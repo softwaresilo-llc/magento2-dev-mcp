@@ -268,7 +268,6 @@ Analyzes `di.xml` files across all DI scopes to find plugins for a given class. 
 - `moduleDir` (required): `app/code/Vendor/Module`, `vendor/vendor/module`, or short form like `Vendor_Module`
 - `locales` (optional): Locale list, e.g. `["en_US","de_DE","es_ES"]`
 - `strictSource` (optional): Strict source phrase coverage (default: `true`)
-- `format` (optional): `text` | `json` (default: `json`)
 
 **Output (normalized):**
 - `okTranslations`
@@ -306,7 +305,6 @@ Analyzes `di.xml` files across all DI scopes to find plugins for a given class. 
 - `moduleDir` (required): `app/code/Vendor/Module`, `vendor/vendor/module`, or short form like `Vendor_Module`
 - `magentoDocsDir` (optional): Version snapshot base dir
 - `versions` (optional): Version list
-- `format` (optional): `text` | `json` (default: `json`)
 
 **Output (normalized):**
 - `versionResults`
@@ -321,7 +319,6 @@ Analyzes `di.xml` files across all DI scopes to find plugins for a given class. 
 **Parameters:**
 - `moduleDir` (required): `app/code/Vendor/Module`, `vendor/vendor/module`, or short form like `Vendor_Module`
 - `extensions` (optional): e.g. `["php","phtml","js","xml"]`
-- `format` (optional): `text` | `json` (default: `json`)
 
 **Output (normalized):**
 - `okCopyright`

@@ -180,10 +180,8 @@ export async function runTranslationCheck(input: {
   moduleDir: string;
   locales?: string[];
   strictSource?: boolean;
-  format?: "text" | "json";
 }): Promise<TranslationCheckResult> {
   const resolvedModule = resolveModuleDirectory(input.moduleDir);
-  const format = input.format ?? "json";
   const strictSource = input.strictSource ?? true;
 
   const effectiveLocales = Array.isArray(input.locales) && input.locales.length > 0
@@ -321,7 +319,7 @@ export async function runTranslationCheck(input: {
       sourcePhrases: sourcePhrases.size,
       locales: effectiveLocales
     },
-    notes: format === "text" ? notes : undefined
+    notes
   };
 }
 
@@ -334,13 +332,12 @@ export function registerTranslationCheckTool(server: McpServer): void {
       inputSchema: {
         moduleDir: z.string().describe("Module directory, e.g. app/code/Vendor/Module or vendor/vendor/module"),
         locales: z.array(z.string()).optional().describe("Locales to validate, e.g. ['en_US','de_DE','es_ES']"),
-        strictSource: z.boolean().default(true).describe("When false, source phrase coverage is downgraded from FAIL to WARN"),
-        format: z.enum(["text", "json"]).default("json").describe("Output format")
+        strictSource: z.boolean().default(true).describe("When false, source phrase coverage is downgraded from FAIL to WARN")
       }
     },
-    async ({ moduleDir, locales, strictSource = true, format = "json" }) => {
+    async ({ moduleDir, locales, strictSource = true }) => {
       try {
-        const payload = await runTranslationCheck({ moduleDir, locales, strictSource, format });
+        const payload = await runTranslationCheck({ moduleDir, locales, strictSource });
 
       return {
         content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],

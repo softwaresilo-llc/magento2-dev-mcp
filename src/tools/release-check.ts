@@ -390,21 +390,21 @@ export function registerReleaseCheckTool(server: McpServer): void {
         setGate("unitTests", await runUnitPhpunit(resolvedModule.relativeModuleDir, resolvedModule.absoluteModuleDir));
         setGate("phpcs", await runPhpcs(resolvedModule.relativeModuleDir, phpcsStandard, phpcsPaths));
 
-        const copyrightResult = await runCopyrightCheck({ moduleDir: resolvedModule.relativeModuleDir, format: "json" });
+        const copyrightResult = await runCopyrightCheck({ moduleDir: resolvedModule.relativeModuleDir });
         setGate("copyright", {
           status: copyrightResult.okCopyright ? "PASS" : "FAIL",
           details: `failures=${copyrightResult.summary.failures} warnings=${copyrightResult.summary.warnings}`,
           meta: copyrightResult
         });
 
-        const translationResult = await runTranslationCheck({ moduleDir: resolvedModule.relativeModuleDir, format: "json" });
+        const translationResult = await runTranslationCheck({ moduleDir: resolvedModule.relativeModuleDir });
         setGate("translations", {
           status: translationResult.okTranslations ? "PASS" : "FAIL",
           details: `failures=${translationResult.summary.failures} warnings=${translationResult.summary.warnings}`,
           meta: translationResult
         });
 
-        const compatibilityResult = await runCompatibilityCheck({ moduleDir: resolvedModule.relativeModuleDir, format: "json" });
+        const compatibilityResult = await runCompatibilityCheck({ moduleDir: resolvedModule.relativeModuleDir });
         setGate("compatibility", {
           status: compatibilityResult.success ? "PASS" : (compatibilityResult.summary.issues_total > 0 ? "WARN" : "FAIL"),
           details: `issues=${compatibilityResult.summary.issues_total}`,

@@ -35,7 +35,6 @@ export interface CompatibilityCheckResult {
   metadata: {
     moduleDir: string;
     constraints: Array<{ packageName: string; constraint: string }>;
-    outputFormat: "text" | "json";
     magentoDocsDir: string;
     checkedVersionsMeta: Array<{ label: string; magentoVersion: string; frameworkVersion: string }>;
     excludedVersionReasons: Array<{ label: string; reasons: string[] }>;
@@ -186,10 +185,8 @@ export async function runCompatibilityCheck(input: {
   moduleDir: string;
   magentoDocsDir?: string;
   versions?: string[];
-  format?: "text" | "json";
 }): Promise<CompatibilityCheckResult> {
   const resolvedModule = resolveModuleDirectory(input.moduleDir);
-  const format = input.format ?? "json";
   const projectRoot = resolve(process.cwd());
   const magentoDocsDir = input.magentoDocsDir?.trim()
     ? resolve(projectRoot, input.magentoDocsDir.trim())
@@ -283,7 +280,6 @@ export async function runCompatibilityCheck(input: {
     metadata: {
       moduleDir: resolvedModule.relativeModuleDir,
       constraints,
-      outputFormat: format,
       magentoDocsDir,
       checkedVersionsMeta,
       excludedVersionReasons
@@ -300,13 +296,12 @@ export function registerCompatibilityCheckTool(server: McpServer): void {
       inputSchema: {
         moduleDir: z.string().describe("Module directory, e.g. app/code/Vendor/Module or vendor/vendor/module"),
         magentoDocsDir: z.string().optional().describe("Optional path containing Magento version directories"),
-        versions: z.array(z.string()).optional().describe("Optional list of target versions"),
-        format: z.enum(["text", "json"]).default("json").describe("Output format")
+        versions: z.array(z.string()).optional().describe("Optional list of target versions")
       }
     },
-    async ({ moduleDir, magentoDocsDir, versions, format = "json" }) => {
+    async ({ moduleDir, magentoDocsDir, versions }) => {
       try {
-        const payload = await runCompatibilityCheck({ moduleDir, magentoDocsDir, versions, format });
+        const payload = await runCompatibilityCheck({ moduleDir, magentoDocsDir, versions });
         return {
           content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
           isError: !payload.success
