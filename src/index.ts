@@ -11,7 +11,7 @@ import { dirname, join, relative, resolve, sep } from "path";
 import { pathToFileURL } from "url";
 import { executePhpScript } from "./php-executor.js";
 import { formatPluginAnalysis } from "./plugin-list-formatter.js";
-import { detectDockerEnvironment } from "./docker-env.js";
+import { detectDockerEnvironment, getLocalPhpBinary, shellQuote } from "./docker-env.js";
 import { registerApiGetTokenTool } from "./tools/api-get-token.js";
 import { registerApiCheckTool } from "./tools/api-check.js";
 import { registerTranslationCheckTool } from "./tools/translation-check.js";
@@ -196,6 +196,58 @@ async function executeMagerun2Command(subcommand: string, parseJson: boolean = f
     return {
       success: false,
       error: `Error executing magerun2 command.\n\nCommand:\n[${command}] ${msg}`,
+      isError: true
+    };
+  }
+}
+
+/**
+ * Helper function to execute Magento CLI commands with consistent error handling.
+ * Accepts the subcommand (everything after "bin/magento", e.g. "setup:upgrade --keep-generated").
+ */
+async function executeMagentoCliCommand(subcommand: string): Promise<{
+  success: true;
+  data: string;
+} | {
+  success: false;
+  error: string;
+  isError: true;
+}> {
+  const fullCommand = dockerEnv
+    ? dockerEnv.wrapCommand(`php bin/magento ${subcommand}`)[0]
+    : `${shellQuote(getLocalPhpBinary())} bin/magento ${subcommand}`;
+
+  try {
+    const { stdout, stderr } = await execAsync(fullCommand, {
+      cwd: process.cwd(),
+      timeout: 30000
+    });
+
+    if (stderr && stderr.trim()) {
+      console.error("Magento CLI stderr:", stderr);
+    }
+
+    return { success: true, data: stdout.trim() };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error(`Magento CLI command failed: ${fullCommand}\n  ${msg}`);
+
+    const notFound =
+      msg.includes("command not found") ||
+      msg.includes("not recognized") ||
+      msg.includes("No such file or directory");
+
+    if (notFound) {
+      return {
+        success: false,
+        error: `Error: Magento CLI command not found.\n\nCommand:\n[${fullCommand}] ${msg}`,
+        isError: true
+      };
+    }
+
+    return {
+      success: false,
+      error: `Error executing Magento CLI command.\n\nCommand:\n[${fullCommand}] ${msg}`,
       isError: true
     };
   }
@@ -2021,7 +2073,7 @@ server.registerTool(
 /**
  * Tool: Setup Upgrade
  *
- * Runs `magerun2 setup:upgrade` to upgrade database schema and data
+ * Runs `php bin/magento setup:upgrade` to upgrade database schema and data
  */
 server.registerTool(
   "setup-upgrade",
@@ -2041,7 +2093,7 @@ server.registerTool(
       command += ` --keep-generated`;
     }
 
-    const result = await executeMagerun2Command(command);
+    const result = await executeMagentoCliCommand(command);
 
     if (!result.success) {
       return {
@@ -2065,7 +2117,7 @@ server.registerTool(
 /**
  * Tool: Setup DI Compile
  *
- * Runs `magerun2 setup:di:compile` to compile dependency injection
+ * Runs `php bin/magento setup:di:compile` to compile dependency injection
  */
 server.registerTool(
   "setup-di-compile",
@@ -2076,7 +2128,7 @@ server.registerTool(
   },
   async () => {
     const command = `setup:di:compile`;
-    const result = await executeMagerun2Command(command);
+    const result = await executeMagentoCliCommand(command);
 
     if (!result.success) {
       return {
@@ -2100,7 +2152,7 @@ server.registerTool(
 /**
  * Tool: Setup DB Status
  *
- * Runs `magerun2 setup:db:status` to check database status
+ * Runs `php bin/magento setup:db:status` to check database status
  */
 server.registerTool(
   "setup-db-status",
@@ -2111,7 +2163,7 @@ server.registerTool(
   },
   async () => {
     const command = `setup:db:status`;
-    const result = await executeMagerun2Command(command);
+    const result = await executeMagentoCliCommand(command);
 
     if (!result.success) {
       return {
@@ -2135,7 +2187,7 @@ server.registerTool(
 /**
  * Tool: Setup Static Content Deploy
  *
- * Runs `magerun2 setup:static-content:deploy` to deploy static content
+ * Runs `php bin/magento setup:static-content:deploy` to deploy static content
  */
 server.registerTool(
   "setup-static-content-deploy",
@@ -2176,7 +2228,7 @@ server.registerTool(
       command += ` --force`;
     }
 
-    const result = await executeMagerun2Command(command);
+    const result = await executeMagentoCliCommand(command);
 
     if (!result.success) {
       return {
