@@ -1,4 +1,4 @@
-import { execFile } from "child_process";
+import { exec, execFile } from "child_process";
 import { existsSync } from "fs";
 import { readFile } from "fs/promises";
 import { join, resolve } from "path";
@@ -6,8 +6,10 @@ import { promisify } from "util";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { resolveModuleDirectory } from "../core/module-resolver.js";
+import { detectDockerEnvironment, getLocalMysqlBinary, getLocalPhpBinary, shellQuote } from "../docker-env.js";
 import { parsePhpunitStats, truncateOutput } from "../core/output.js";
 
+const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
 
 const BYPASS_FLAGS = [
@@ -47,6 +49,7 @@ function parseInstallConfigPhp(content: string): IntegrationDbConfig | null {
 }
 
 async function runMysqlQuery(config: IntegrationDbConfig, sql: string): Promise<string> {
+  const dockerEnv = detectDockerEnvironment(process.cwd());
   const mysqlArgs = [
     "-h",
     config.host,
@@ -58,7 +61,17 @@ async function runMysqlQuery(config: IntegrationDbConfig, sql: string): Promise<
     sql
   ];
 
-  const { stdout } = await execFileAsync("mysql", mysqlArgs, {
+  if (dockerEnv) {
+    const command = dockerEnv.buildMysqlCommand(mysqlArgs);
+    const { stdout } = await execAsync(command, {
+      cwd: process.cwd(),
+      timeout: 30000,
+      maxBuffer: 4 * 1024 * 1024
+    });
+    return stdout.trim();
+  }
+
+  const { stdout } = await execFileAsync(getLocalMysqlBinary(), mysqlArgs, {
     cwd: process.cwd(),
     timeout: 30000,
     maxBuffer: 4 * 1024 * 1024
@@ -138,29 +151,24 @@ async function runPhpunit(
   noDoNotCacheResult: boolean
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   const projectRoot = resolve(process.cwd());
-  const dockerPhpScript = join(projectRoot, "docker", "scripts", "php");
   const phpunitConfig = join(projectRoot, "dev", "tests", "integration", "phpunit.xml");
+  const dockerEnv = detectDockerEnvironment(projectRoot);
 
-  const args = ["vendor/bin/phpunit", "-c", "dev/tests/integration/phpunit.xml", targetPath];
+  const phpunitArgs = ["vendor/bin/phpunit", "-c", "dev/tests/integration/phpunit.xml", targetPath];
   if (!noDoNotCacheResult) {
-    args.push("--do-not-cache-result");
+    phpunitArgs.push("--do-not-cache-result");
   }
   if (filter?.trim()) {
-    args.push("--filter", filter.trim());
+    phpunitArgs.push("--filter", filter.trim());
   }
 
-  const candidates: Array<{ cmd: string; args: string[] }> = [];
-  if (existsSync(dockerPhpScript)) {
-    candidates.push({ cmd: dockerPhpScript, args });
-  }
-  if (existsSync(join(projectRoot, "vendor", "bin", "phpunit")) && existsSync(phpunitConfig)) {
-    candidates.push({ cmd: "vendor/bin/phpunit", args: ["-c", "dev/tests/integration/phpunit.xml", targetPath, ...(noDoNotCacheResult ? [] : ["--do-not-cache-result"]), ...(filter?.trim() ? ["--filter", filter.trim()] : [])] });
-  }
+  if (dockerEnv) {
+    const command = dockerEnv.wrapCommand(
+      `${shellQuote("php")} ${phpunitArgs.map(arg => shellQuote(arg)).join(" ")}`
+    )[0];
 
-  let lastError: Error | null = null;
-  for (const candidate of candidates) {
     try {
-      const { stdout, stderr } = await execFileAsync(candidate.cmd, candidate.args, {
+      const { stdout, stderr } = await execAsync(command, {
         cwd: projectRoot,
         timeout: 900000,
         maxBuffer: 20 * 1024 * 1024
@@ -168,7 +176,6 @@ async function runPhpunit(
       return { exitCode: 0, stdout, stderr };
     } catch (error) {
       const typedError = error as Error & { code?: number | string; stdout?: string; stderr?: string };
-      lastError = typedError;
       if (typeof typedError.code === "number") {
         return {
           exitCode: typedError.code,
@@ -176,14 +183,46 @@ async function runPhpunit(
           stderr: typedError.stderr ?? typedError.message
         };
       }
+
+      return {
+        exitCode: 1,
+        stdout: "",
+        stderr: typedError.message
+      };
     }
   }
 
-  return {
-    exitCode: 1,
-    stdout: "",
-    stderr: lastError ? lastError.message : "No phpunit executable candidate found"
-  };
+  if (!existsSync(join(projectRoot, "vendor", "bin", "phpunit")) || !existsSync(phpunitConfig)) {
+    return {
+      exitCode: 1,
+      stdout: "",
+      stderr: "No phpunit executable candidate found"
+    };
+  }
+
+  try {
+    const { stdout, stderr } = await execFileAsync(getLocalPhpBinary(), phpunitArgs, {
+      cwd: projectRoot,
+      timeout: 900000,
+      maxBuffer: 20 * 1024 * 1024
+    });
+    return { exitCode: 0, stdout, stderr };
+  } catch (error) {
+    const typedError = error as Error & { code?: number | string; stdout?: string; stderr?: string };
+    if (typeof typedError.code === "number") {
+      return {
+        exitCode: typedError.code,
+        stdout: typedError.stdout ?? "",
+        stderr: typedError.stderr ?? typedError.message
+      };
+    }
+
+    return {
+      exitCode: 1,
+      stdout: "",
+      stderr: typedError.message
+    };
+  }
 }
 
 export function registerModuleIntegrationTestTool(server: McpServer): void {

@@ -2,7 +2,12 @@
   "mcpServers": {
     "magento2-dev": {
       "command": "node",
-      "args": ["dist/index.js"],
+      "args": [
+        "dist/cli.js",
+        "--use-compose=true",
+        "--php-service=php-fpm",
+        "--mysql-service=mysql"
+      ],
       "cwd": ".",
       "env": {},
       "description": "Magento 2 Development MCP Server",

@@ -37,29 +37,70 @@ npx -y @elgentos/magento2-dev-mcp
 
 See [AI Platform Configuration Examples](examples/ai-platform-configs.md) for platform-specific setup instructions.
 
-## Docker Environment Support
+## Execution Mode
 
-The server automatically detects Docker-based Magento environments and routes `magerun2` commands through the container:
+The server uses explicit environment configuration instead of guessing Docker service names.
 
-| Environment | Detection | Command prefix |
-|---|---|---|
-| **Warden** | `WARDEN_ENV_TYPE` in `.env` | `warden shell -c '...'` |
-| **DDEV** | `.ddev/` directory | `ddev exec ...` |
-| **docker-magento** | `bin/clinotty` file | `bin/clinotty ...` |
-| **docker-compose** | `docker-compose.yml` or `compose.yaml` | `docker compose exec -T <service> ...` |
+### Local binaries
 
-For docker-compose the server tries the service names `phpfpm`, `php-fpm`, and `php` in order.
+Use the binaries available on the host machine:
 
-If Docker execution fails, the server falls back to running `magerun2` locally.
+```json
+{
+  "mcpServers": {
+    "magento2-dev": {
+      "command": "npx",
+      "args": ["-y", "@elgentos/magento2-dev-mcp", "--use-compose=false"]
+    }
+  }
+}
+```
+
+### Docker compose
+
+Use fixed PHP and MySQL service names:
+
+```json
+{
+  "mcpServers": {
+    "magento2-dev": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@elgentos/magento2-dev-mcp",
+        "--use-compose=true",
+        "--php-service=php-fpm",
+        "--mysql-service=mysql"
+      ]
+    }
+  }
+}
+```
 
 ## Environment Variables
 
 | Variable | Description | Default |
 |---|---|---|
+| `MAGENTO2_USE_COMPOSE` | When `true`, run commands through `docker compose exec`. When `false`, use local binaries. | `false` |
+| `MAGENTO2_PHP_SERVICE` | PHP service name for `docker compose exec` | none |
+| `MAGENTO2_MYSQL_SERVICE` | MySQL service name for `docker compose exec` | none |
+| `MAGENTO2_CONTAINER_ROOT` | Magento root path inside the PHP container | `/var/www/html` |
+| `MAGENTO2_PHP_BIN` | Local PHP binary used when `MAGENTO2_USE_COMPOSE=false` | `php` |
+| `MAGENTO2_MYSQL_BIN` | Local MySQL binary used when `MAGENTO2_USE_COMPOSE=false` | `mysql` |
 | `MAGERUN2_COMMAND` | Override the magerun2 binary name or path | `magerun2` |
 | `MAGENTO_BASE_URL` | Default base URL for `api-get-token`, `api-check`, and `api-contract` | `https://magento248.test` |
 | `MAILPIT_BASE_URL` | Default base URL for `mail-inspect` when `source.baseUrl` is omitted | `https://mail.magento248.test` |
 | `MAIL_RENDER_CHROME_COMMAND` | Chrome/Chromium binary for HTML-to-image rendering in `mail-inspect` | auto-detect |
+
+The same execution settings can also be passed as CLI parameters:
+
+- `--use-compose=true|false`
+- `--php-service=<name>`
+- `--mysql-service=<name>`
+- `--container-root=<path>`
+- `--php-bin=<path>`
+- `--mysql-bin=<path>`
+- `--magerun2-command=<command>`
 
 Use `MAGERUN2_COMMAND` when your system installs the binary under a different name (e.g. `n98-magerun2`) or when you need to specify an absolute path:
 
@@ -202,7 +243,7 @@ Analyzes `di.xml` files across all DI scopes to find plugins for a given class. 
 
 **Scopes checked:** `global`, `adminhtml`, `frontend`, `crontab`, `webapi_rest`, `webapi_soap`, `graphql`
 
-**Docker support:** Automatically detects Warden, DDEV, docker-magento, and docker-compose environments. Falls back to local PHP.
+**Execution support:** Uses either explicit docker compose services or explicit local binaries, depending on `MAGENTO2_USE_COMPOSE`.
 
 </details>
 

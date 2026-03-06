@@ -129,8 +129,7 @@ const server = new McpServer({
 /**
  * Helper function to execute magerun2 commands with consistent error handling.
  * Accepts the subcommand (everything after the binary name, e.g. "cache:clean --all").
- * When a Docker environment is detected, commands are routed through the container
- * with a local fallback. The binary name can be configured via MAGERUN2_COMMAND env var.
+ * The binary name can be configured via MAGERUN2_COMMAND env var.
  */
 async function executeMagerun2Command(subcommand: string, parseJson: boolean = false): Promise<{
   success: true;
@@ -142,79 +141,64 @@ async function executeMagerun2Command(subcommand: string, parseJson: boolean = f
   isError: true;
 }> {
   const fullCommand = `${magerunBin} ${subcommand}`;
-  const commands: string[] = [];
+  const command = dockerEnv ? dockerEnv.wrapCommand(fullCommand)[0] : fullCommand;
 
-  if (dockerEnv) {
-    commands.push(...dockerEnv.wrapCommand(fullCommand));
-  }
-  commands.push(fullCommand); // local fallback always included
+  try {
+    const { stdout, stderr } = await execAsync(command, {
+      cwd: process.cwd(),
+      timeout: 30000 // 30 second timeout
+    });
 
-  const errors: string[] = [];
-
-  for (const command of commands) {
-    try {
-      const { stdout, stderr } = await execAsync(command, {
-        cwd: process.cwd(),
-        timeout: 30000 // 30 second timeout
-      });
-
-      if (stderr && stderr.trim()) {
-        console.error("magerun2 stderr:", stderr);
-      }
-
-      if (parseJson) {
-        try {
-          return { success: true, data: JSON.parse(stdout), rawOutput: stdout };
-        } catch (parseError) {
-          return {
-            success: false,
-            error: `Error parsing magerun2 JSON output: ${parseError}\n\nRaw output:\n${stdout}`,
-            isError: true
-          };
-        }
-      }
-
-      return { success: true, data: stdout.trim(), rawOutput: stdout };
-
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      console.error(`magerun2 command failed: ${command}\n  ${msg}`);
-      errors.push(`[${command}] ${msg}`);
-      continue;
+    if (stderr && stderr.trim()) {
+      console.error("magerun2 stderr:", stderr);
     }
-  }
 
-  // All commands failed — build a helpful error message
-  const lastError = errors[errors.length - 1] ?? '';
-  const allNotFound = errors.every(e =>
-    e.includes("command not found") || e.includes("not recognized") || e.includes("No such file or directory")
-  );
-
-  if (allNotFound) {
-    let msg = `Error: ${magerunBin} command not found.`;
-    if (dockerEnv) {
-      msg += `\n\nDocker environment detected (${dockerEnv.type}) but execution failed.\nEnsure the container is running and '${magerunBin}' is available inside it.`;
-    } else {
-      msg += `\n\nPlease ensure n98-magerun2 is installed and available in your PATH.`;
+    if (parseJson) {
+      try {
+        return { success: true, data: JSON.parse(stdout), rawOutput: stdout };
+      } catch (parseError) {
+        return {
+          success: false,
+          error: `Error parsing magerun2 JSON output: ${parseError}\n\nRaw output:\n${stdout}`,
+          isError: true
+        };
+      }
     }
-    msg += `\n\nInstallation instructions: https://github.com/netz98/n98-magerun2`;
-    msg += `\n\nDetails:\n${errors.join('\n')}`;
-    return { success: false, error: msg, isError: true };
-  }
 
-  if (lastError.includes("not a Magento installation") || lastError.includes("app/etc/env.php")) {
+    return { success: true, data: stdout.trim(), rawOutput: stdout };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error(`magerun2 command failed: ${command}\n  ${msg}`);
+
+    const allNotFound =
+      msg.includes("command not found") || msg.includes("not recognized") || msg.includes("No such file or directory");
+
+    if (allNotFound) {
+      let errorMessage = `Error: ${magerunBin} command not found.`;
+      if (dockerEnv) {
+        errorMessage += `\n\nCompose mode is enabled. Ensure service "${dockerEnv.phpService}" is running and '${magerunBin}' is available inside it.`;
+      } else {
+        errorMessage += `\n\nPlease ensure n98-magerun2 is installed and available in your PATH.`;
+      }
+      errorMessage += `\n\nInstallation instructions: https://github.com/netz98/n98-magerun2`;
+      errorMessage += `\n\nCommand:\n[${command}] ${msg}`;
+      return { success: false, error: errorMessage, isError: true };
+    }
+
+    if (msg.includes("not a Magento installation") || msg.includes("app/etc/env.php")) {
+      return {
+        success: false,
+        error: "Error: Current directory does not appear to be a Magento 2 installation. Please run this command from your Magento 2 root directory.",
+        isError: true
+      };
+    }
+
     return {
       success: false,
-      error: "Error: Current directory does not appear to be a Magento 2 installation. Please run this command from your Magento 2 root directory.",
+      error: `Error executing magerun2 command.\n\nCommand:\n[${command}] ${msg}`,
       isError: true
     };
   }
-
-  return {
-    success: false,
-    error: `Error executing magerun2 command.\n\nAttempts:\n${errors.join('\n')}`,
-    isError: true
-  };
 }
 
 function normalizeBaseUrl(url: string): string {

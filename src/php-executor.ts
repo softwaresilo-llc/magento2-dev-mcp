@@ -3,7 +3,7 @@ import { promisify } from "util";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { readdirSync, copyFileSync, mkdirSync, rmSync } from "fs";
-import { detectDockerEnvironment, shellQuote, type DockerEnvironment } from "./docker-env.js";
+import { detectDockerEnvironment, getLocalPhpBinary, shellQuote, type DockerEnvironment } from "./docker-env.js";
 
 const execAsync = promisify(exec);
 
@@ -29,8 +29,7 @@ async function runPhpCommand(command: string, execOptions: ExecOptions): Promise
 }
 
 /**
- * Try executing a PHP script inside a Docker container.
- * Returns null when all Docker attempts fail (signals "fall back to local").
+ * Execute a PHP script inside the configured Docker container.
  */
 async function executeViaDocker(
   dockerEnv: DockerEnvironment,
@@ -39,7 +38,7 @@ async function executeViaDocker(
   phpSourceDir: string,
   projectRoot: string,
   execOptions: ExecOptions,
-): Promise<PhpScriptResult | null> {
+): Promise<PhpScriptResult> {
   const tmpDir = join(projectRoot, 'var', 'tmp', 'mcp-php');
   try {
     // Copy PHP scripts to project root (which is Docker-mounted)
@@ -51,19 +50,19 @@ async function executeViaDocker(
     const containerArgs = [...args];
     containerArgs[0] = dockerEnv.containerRoot;
     const containerScriptPath = `${dockerEnv.containerRoot}/var/tmp/mcp-php/${scriptName}`;
-    const commands = dockerEnv.buildPhpCommands(containerScriptPath, containerArgs);
+    const command = dockerEnv.buildPhpCommands(containerScriptPath, containerArgs)[0];
 
-    for (const command of commands) {
-      try {
-        const data = await runPhpCommand(command, execOptions);
-        return { success: true, data };
-      } catch {
-        continue;
-      }
+    try {
+      const data = await runPhpCommand(command, execOptions);
+      return { success: true, data };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return {
+        success: false,
+        error: `Failed to execute PHP script via ${dockerEnv.type} using PHP service "${dockerEnv.phpService}".\n\nError: ${errorMessage}`,
+        isError: true,
+      };
     }
-
-    console.error(`Docker execution failed (${dockerEnv.type}), falling back to local PHP`);
-    return null;
   } finally {
     try {
       rmSync(tmpDir, { recursive: true, force: true });
@@ -83,7 +82,8 @@ async function executeViaLocalPhp(
 ): Promise<PhpScriptResult> {
   try {
     const scriptPath = join(phpSourceDir, scriptName);
-    const command = `php ${shellQuote(scriptPath)} ${args.map(a => shellQuote(a)).join(' ')}`;
+    const phpBin = getLocalPhpBinary();
+    const command = `${shellQuote(phpBin)} ${shellQuote(scriptPath)} ${args.map(a => shellQuote(a)).join(' ')}`;
     const data = await runPhpCommand(command, execOptions);
     return { success: true, data };
   } catch (localError) {
@@ -92,7 +92,7 @@ async function executeViaLocalPhp(
     if (dockerEnvType) {
       return {
         success: false,
-        error: `Failed to execute PHP script via ${dockerEnvType} Docker environment and local PHP.\n\nError: ${errorMessage}\n\nEnsure PHP is available in your Docker container or locally.`,
+        error: `Failed to execute PHP script via ${dockerEnvType} Docker environment.\n\nError: ${errorMessage}`,
         isError: true,
       };
     }
@@ -123,9 +123,8 @@ export async function executePhpScript(scriptName: string, args: string[]): Prom
   const execOptions = { cwd: projectRoot, timeout: 60000, maxBuffer: 10 * 1024 * 1024 };
 
   if (dockerEnv) {
-    const result = await executeViaDocker(dockerEnv, scriptName, args, phpSourceDir, projectRoot, execOptions);
-    if (result) return result;
+    return executeViaDocker(dockerEnv, scriptName, args, phpSourceDir, projectRoot, execOptions);
   }
 
-  return executeViaLocalPhp(scriptName, args, phpSourceDir, execOptions, dockerEnv?.type ?? null);
+  return executeViaLocalPhp(scriptName, args, phpSourceDir, execOptions, null);
 }
