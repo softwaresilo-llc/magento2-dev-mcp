@@ -1,4 +1,4 @@
-import { existsSync, statSync } from "fs";
+import { existsSync, readdirSync, statSync } from "fs";
 import { resolve, relative, sep } from "path";
 
 export interface ResolvedModuleDirectory {
@@ -107,6 +107,69 @@ function createGuessCandidates(moduleDirInput: string): string[] {
   return candidates;
 }
 
+function normalizeIdentifier(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function findModuleCandidatesByName(projectRoot: string, moduleNameInput: string): string[] {
+  const normalizedName = normalizePath(moduleNameInput);
+  const target = normalizeIdentifier(normalizedName);
+  if (!target) {
+    return [];
+  }
+
+  const candidates: string[] = [];
+  const roots = ["vendor", "app/code"];
+
+  for (const root of roots) {
+    const rootAbsolute = resolve(projectRoot, root);
+    if (!existsDirectory(rootAbsolute)) {
+      continue;
+    }
+
+    let vendorEntries;
+    try {
+      vendorEntries = readdirSync(rootAbsolute, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const vendorEntry of vendorEntries) {
+      if (!vendorEntry.isDirectory()) {
+        continue;
+      }
+
+      const vendorPath = resolve(rootAbsolute, vendorEntry.name);
+      let moduleEntries;
+      try {
+        moduleEntries = readdirSync(vendorPath, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+
+      for (const moduleEntry of moduleEntries) {
+        if (!moduleEntry.isDirectory()) {
+          continue;
+        }
+
+        const moduleName = moduleEntry.name;
+        const vendorName = vendorEntry.name;
+        const relativePath = `${root}/${vendorName}/${moduleName}`;
+
+        const moduleOnly = normalizeIdentifier(moduleName);
+        const vendorModuleUnderscore = normalizeIdentifier(`${vendorName}_${moduleName}`);
+        const vendorModuleDash = normalizeIdentifier(`${vendorName}-${moduleName}`);
+
+        if (moduleOnly === target || vendorModuleUnderscore === target || vendorModuleDash === target) {
+          addUnique(candidates, relativePath);
+        }
+      }
+    }
+  }
+
+  return candidates;
+}
+
 export function resolveModuleDirectory(
   moduleDirInput: string,
   options: ResolveModuleDirOptions = {}
@@ -120,6 +183,11 @@ export function resolveModuleDirectory(
 
   const tried: string[] = [];
   const candidates = createGuessCandidates(normalizedInput);
+  if (!normalizedInput.includes("/")) {
+    for (const candidate of findModuleCandidatesByName(projectRoot, normalizedInput)) {
+      addUnique(candidates, candidate);
+    }
+  }
 
   for (const candidate of candidates) {
     const resolved = resolveCandidate(projectRoot, candidate, options.requireSubPath);

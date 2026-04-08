@@ -1,7 +1,7 @@
 import { exec, execFile } from "child_process";
 import { existsSync } from "fs";
 import { readFile } from "fs/promises";
-import { join, resolve } from "path";
+import { join, relative, resolve, sep } from "path";
 import { promisify } from "util";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -23,6 +23,56 @@ interface IntegrationDbConfig {
   dbName: string;
   dbUser: string;
   dbPassword: string;
+}
+
+function normalizePath(input: string): string {
+  return input.trim().replace(/\\/g, "/").replace(/^\.\/+/, "").replace(/\/+/g, "/");
+}
+
+function isPathInside(basePath: string, candidatePath: string): boolean {
+  const normalizedBase = resolve(basePath);
+  const normalizedCandidate = resolve(candidatePath);
+  const basePrefix = normalizedBase.endsWith(sep) ? normalizedBase : `${normalizedBase}${sep}`;
+  return normalizedCandidate === normalizedBase || normalizedCandidate.startsWith(basePrefix);
+}
+
+function buildIntegrationFileCandidates(fileInput: string, moduleRelativeDir: string): string[] {
+  const normalizedInput = normalizePath(fileInput);
+  if (!normalizedInput) {
+    return [];
+  }
+
+  const candidates: string[] = [];
+  const pushUnique = (candidate: string): void => {
+    const normalizedCandidate = normalizePath(candidate);
+    if (!normalizedCandidate || normalizedCandidate === ".") {
+      return;
+    }
+    if (!candidates.includes(normalizedCandidate)) {
+      candidates.push(normalizedCandidate);
+    }
+  };
+
+  const normalizedModuleDir = normalizePath(moduleRelativeDir);
+  const prefixCandidates = [
+    "Test/Integration/",
+    `${normalizedModuleDir}/Test/Integration/`,
+    `${normalizedModuleDir}/`
+  ];
+
+  let matchedPrefix = false;
+  for (const prefix of prefixCandidates) {
+    if (normalizedInput.startsWith(prefix)) {
+      matchedPrefix = true;
+      pushUnique(normalizedInput.slice(prefix.length));
+    }
+  }
+
+  if (!matchedPrefix) {
+    pushUnique(normalizedInput);
+  }
+
+  return candidates;
 }
 
 function parseInstallConfigPhp(content: string): IntegrationDbConfig | null {
@@ -248,6 +298,7 @@ export function registerModuleIntegrationTestTool(server: McpServer): void {
       fixBypassFlags = false,
       skipBypassFlagsCheck = false
     }) => {
+      const projectRoot = resolve(process.cwd());
       let resolvedModule;
       try {
         resolvedModule = resolveModuleDirectory(moduleDir);
@@ -268,15 +319,36 @@ export function registerModuleIntegrationTestTool(server: McpServer): void {
 
       let targetRelativePath = `${resolvedModule.relativeModuleDir}/Test/Integration`;
       if (file?.trim()) {
-        const filePath = join(integrationDir, file.trim());
-        if (!existsSync(filePath)) {
+        const integrationFileCandidates = buildIntegrationFileCandidates(file.trim(), resolvedModule.relativeModuleDir);
+        const attempted: string[] = [];
+        let resolvedTargetPath: string | null = null;
+
+        for (const candidate of integrationFileCandidates) {
+          const absoluteCandidate = resolve(integrationDir, candidate);
+          if (!isPathInside(integrationDir, absoluteCandidate)) {
+            continue;
+          }
+
+          const relativeCandidate = normalizePath(relative(projectRoot, absoluteCandidate));
+          attempted.push(relativeCandidate);
+          if (existsSync(absoluteCandidate)) {
+            resolvedTargetPath = relativeCandidate;
+            break;
+          }
+        }
+
+        if (!resolvedTargetPath) {
+          const attemptedText = attempted.length > 0 ? ` (tried: ${attempted.join(", ")})` : "";
           return {
-            content: [{ type: "text", text: `integration test file not found: ${targetRelativePath}/${file.trim()}` }],
+            content: [{ type: "text", text: `integration test file not found: ${file.trim()}${attemptedText}` }],
             isError: true
           };
         }
-        targetRelativePath = `${targetRelativePath}/${file.trim()}`;
+
+        targetRelativePath = resolvedTargetPath;
       }
+
+      console.error(`[module-integration-test] resolved target path: ${targetRelativePath}`);
 
       const bypassWarnings: string[] = [];
       if (!skipBypassFlagsCheck || fixBypassFlags) {
@@ -344,6 +416,7 @@ export function registerModuleIntegrationTestTool(server: McpServer): void {
         phpunitExitCode: phpunitRun.exitCode,
         testsRun: stats.testsRun,
         failures: stats.failures,
+        targetPath: targetRelativePath,
         stdout: truncateOutput(phpunitRun.stdout),
         stderr: truncateOutput(phpunitRun.stderr),
         warnings: bypassWarnings
