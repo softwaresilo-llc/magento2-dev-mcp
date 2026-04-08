@@ -202,9 +202,12 @@ async function runPhpunit(
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   const projectRoot = resolve(process.cwd());
   const phpunitConfig = join(projectRoot, "dev", "tests", "integration", "phpunit.xml");
+  const phpunitConfigDir = join(projectRoot, "dev", "tests", "integration");
   const dockerEnv = detectDockerEnvironment(projectRoot);
+  const absoluteTargetPath = resolve(projectRoot, targetPath);
+  const phpunitTargetPath = normalizePath(relative(phpunitConfigDir, absoluteTargetPath));
 
-  const phpunitArgs = ["vendor/bin/phpunit", "-c", "dev/tests/integration/phpunit.xml", targetPath];
+  const phpunitArgs = ["vendor/bin/phpunit", "-c", "dev/tests/integration/phpunit.xml", phpunitTargetPath];
   if (!noDoNotCacheResult) {
     phpunitArgs.push("--do-not-cache-result");
   }
