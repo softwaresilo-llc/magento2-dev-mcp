@@ -13,7 +13,7 @@
     "dev": "tsc && node dist/index.js",
     "watch": "tsc --watch",
     "prepublishOnly": "npm run build",
-    "test": "echo \"No tests specified\" && exit 0"
+    "test": "npm run build && node --test test/**/*.test.mjs"
   },
   "files": [
     "dist/",
