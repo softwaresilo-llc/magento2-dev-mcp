@@ -250,6 +250,46 @@ test("translation-check reports source coverage as warning instead of fail when 
   });
 });
 
+test("translation-check fails on untranslated technical labels instead of allowlisting them", async () => {
+  await withFixture(async (fixture) => {
+    await writeFile(
+      join(fixture.projectRoot, fixture.moduleRelativeDir, "i18n", "en_US.csv"),
+      `"Id","Id"\n`
+    );
+    await writeFile(
+      join(fixture.projectRoot, fixture.moduleRelativeDir, "i18n", "de_DE.csv"),
+      `"Id","ID"\n`
+    );
+    await writeFile(
+      join(fixture.projectRoot, fixture.moduleRelativeDir, "Block", "Example.php"),
+      `<?php
+declare(strict_types=1);
+
+namespace MageB2B\\SampleModule\\Block;
+
+class Example
+{
+    public function label(): string
+    {
+        return __('Id');
+    }
+}
+`
+    );
+
+    await withProjectRoot(fixture.projectRoot, async () => {
+      const result = await runTranslationCheck({ moduleDir: fixture.moduleRelativeDir });
+
+      assert.equal(result.okTranslations, false);
+      assert.ok(result.summary.failures > 0);
+      assert.deepEqual(result.details?.untranslatedValues, {
+        de_DE: ["Id"]
+      });
+      assert.match(result.messages?.fail.join("\n") ?? "", /de_DE: untranslated values \(same as source\) in 1 key\(s\)/);
+    });
+  });
+});
+
 test("translation-check uses dependency fallback when source phrase is provided by required mageb2b module", async () => {
   await withFixture(async (fixture) => {
     const dependencyDir = join(fixture.projectRoot, "vendor", "mageb2b", "base-module");
@@ -300,7 +340,7 @@ test("translation-check uses dependency fallback when source phrase is provided 
   });
 });
 
-test("translation-check warns for untranslated same-as-source values without failing", async () => {
+test("translation-check fails for untranslated same-as-source values", async () => {
   await withFixture(async (fixture) => {
     await writeFile(
       join(fixture.projectRoot, fixture.moduleRelativeDir, "Block", "Example.php"),
@@ -330,13 +370,12 @@ class Example
     await withProjectRoot(fixture.projectRoot, async () => {
       const result = await runTranslationCheck({ moduleDir: fixture.moduleRelativeDir });
 
-      assert.equal(result.okTranslations, true);
-      assert.equal(result.summary.failures, 0);
-      assert.ok(result.summary.warnings > 0);
+      assert.equal(result.okTranslations, false);
+      assert.ok(result.summary.failures > 0);
       assert.deepEqual(result.details?.untranslatedValues, {
         de_DE: ["Sublogin"]
       });
-      assert.match(result.messages?.warn.join("\n") ?? "", /untranslated values \(same as source\) in 1 key/);
+      assert.match(result.messages?.fail.join("\n") ?? "", /untranslated values \(same as source\) in 1 key/);
     });
   });
 });

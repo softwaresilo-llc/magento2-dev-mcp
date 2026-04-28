@@ -65,16 +65,6 @@ interface FallbackEntry {
 
 const EXCLUDED_TERMS = ["mageb2b", "softwaresilo"];
 const EXCLUDED_EXACT_PHRASES = new Set(["MageB2B", "SoftwareSilo"].map((value) => normalizeForMatch(value)));
-const ALLOWED_UNTRANSLATED_BY_LOCALE: Record<string, string[]> = {
-  de_DE: ["Downloads", "ID", "Name", "Status", "Website"],
-  es_ES: ["General", "ID", "No"]
-};
-const ALLOWED_UNTRANSLATED_NORMALIZED = new Map(
-  Object.entries(ALLOWED_UNTRANSLATED_BY_LOCALE).map(([locale, values]) => [
-    locale,
-    new Set(values.map((value) => normalizeForMatch(value)))
-  ])
-);
 
 function ascendDirectory(pathValue: string, levels: number): string {
   let current = pathValue;
@@ -103,6 +93,10 @@ function normalizeForMatch(value: string): string {
     .trim();
 }
 
+function normalizeForUntranslatedMatch(value: string): string {
+  return normalizeForMatch(value).toLocaleLowerCase("en-US");
+}
+
 function normalizeWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
@@ -117,10 +111,6 @@ function hasExcludedTerm(value: string): boolean {
     return false;
   }
   return EXCLUDED_TERMS.some((term) => normalized.includes(term));
-}
-
-function isAllowedUntranslated(locale: string, key: string): boolean {
-  return ALLOWED_UNTRANSLATED_NORMALIZED.get(locale)?.has(normalizeForMatch(key)) ?? false;
 }
 
 function placeholderTokens(value: string): string[] {
@@ -173,7 +163,7 @@ function parseCsvLine(line: string): { columns: string[]; unclosedQuote: boolean
   return { columns, unclosedQuote: inQuotes };
 }
 
-async function parseLocaleCsv(filePath: string): Promise<ParsedCsv> {
+async function parseLocaleCsv(filePath: string, allowExtraColumns = false): Promise<ParsedCsv> {
   const parsed: ParsedCsv = {
     exists: existsSync(filePath),
     parseError: null,
@@ -206,7 +196,7 @@ async function parseLocaleCsv(filePath: string): Promise<ParsedCsv> {
 
       const lineNumber = lineIndex + 1;
       const { columns, unclosedQuote } = parseCsvLine(rawLine);
-      if (columns.length !== 2 || unclosedQuote) {
+      if (columns.length < 2 || (!allowExtraColumns && columns.length !== 2) || unclosedQuote) {
         parsed.invalidColumnLines.push({
           line: lineNumber,
           raw: rawLine,
@@ -217,13 +207,15 @@ async function parseLocaleCsv(filePath: string): Promise<ParsedCsv> {
 
       const key = columns[0].trim();
       const value = columns[1].trim();
-      const expectedLine = canonicalCsvLine(columns[0], columns[1]);
-      if (rawLine !== expectedLine) {
-        parsed.noncanonicalCsvLines.push({
-          line: lineNumber,
-          raw: rawLine,
-          expected: expectedLine
-        });
+      if (!allowExtraColumns) {
+        const expectedLine = canonicalCsvLine(columns[0], columns[1]);
+        if (rawLine !== expectedLine) {
+          parsed.noncanonicalCsvLines.push({
+            line: lineNumber,
+            raw: rawLine,
+            expected: expectedLine
+          });
+        }
       }
 
       if (!key) {
@@ -533,7 +525,7 @@ async function collectExternalTranslationEntries(projectRoot: string, locales: s
   }
 
   const registerSource = async (csvPath: string, packageName: string, locale?: string): Promise<void> => {
-    const parsed = await parseLocaleCsv(csvPath);
+    const parsed = await parseLocaleCsv(csvPath, true);
     if (!parsed.exists || parsed.parseError) {
       return;
     }
@@ -763,7 +755,6 @@ export async function runTranslationCheck(input: {
   info(`module=${resolvedModule.absoluteModuleDir}`);
   info(`locales=${effectiveLocales.join(",")}`);
   info("excluded_phrases=MageB2B,SoftwareSilo");
-  info("allowed_untranslated=de_DE:[Downloads,ID,Name,Status,Website];es_ES:[General,ID,No]");
   pass(`module directory found: ${resolvedModule.absoluteModuleDir}`);
 
   const dependencyModules = await resolveDependencyModules(resolvedModule.absoluteModuleDir, projectRoot);
@@ -1070,9 +1061,9 @@ export async function runTranslationCheck(input: {
       }
 
       if (locale !== baseLocale && sourcePhrases.has(normalizedKey)) {
-        if (normalizeForMatch(entry.value) === normalizedKey && !isAllowedUntranslated(locale, displayKey)) {
+        if (normalizeForUntranslatedMatch(entry.value) === normalizeForUntranslatedMatch(displayKey)) {
           const fallbackValue = dependencyEntry?.value ?? coreEntry?.value;
-          if (!fallbackValue || normalizeForMatch(fallbackValue) === normalizedKey) {
+          if (!fallbackValue && !externalEntries.reservedEntries.get(normalizedKey)) {
             untranslatedValues[locale] = untranslatedValues[locale] ?? [];
             untranslatedValues[locale].push(displayKey);
           }
@@ -1110,7 +1101,7 @@ export async function runTranslationCheck(input: {
 
   for (const [locale, values] of Object.entries(details.untranslatedValues as Record<string, string[]>)) {
     if (values.length > 0) {
-      warn(`${locale}: untranslated values (same as source) in ${values.length} key(s)`);
+      fail(`${locale}: untranslated values (same as source) in ${values.length} key(s)`);
     }
   }
 
